@@ -1,0 +1,360 @@
+################################################################################
+###################Data processing for depth analyses###########################
+########This code starts with Lizzie's zooplankton files in long################
+########form and pulls the requested data out by depth, group, #################
+########start date, species of interest, and/or lifestage ######################
+########as specified at the top of the code. Caution should be##################
+########used when looking at a particular species since species#################
+########names are matched using the "grep" function that might #################
+########return locations for species with similar names. In other###############
+########words, it is necessary to inspect the species lists to make#############
+########sure that the data summary is providing the correct output##############
+################################################################################
+
+########Output consists of these objects:
+######1. "zooplankton": If monthly time series is requested, "zooplankton" is the monthly time series for the data requested (abundance over time)
+######2. "winter","spring","summer","fall": If seasonal time series is requested, there will be four objects "winter", "spring", "summer", "fall" that summarize abundance over time by seasons for the species requested
+######3. "species": list of species found in the data
+######4. "Rabundance": % of total individuals by species. For seasonal data the list is composed of 4 elements in this order: winter, spring, summer, fall
+######5. "Major": list of the major species (>10% abundance)
+######6. "QC": 50 randomly chosen cells from the dataframe for comparison with Lyubov's original data
+######7. "anydoubles": For each species, were any codes doubles? Uses the anyDuplicated function to look for duplicated columns in dataframe. If all zeroes, then no duplicates detected
+######8. "quarterly": Average abundance by quarter for all species
+########Code requires the following packages: doBy, xts, zoo
+
+
+######## 1. The main data file containing all observations
+# Check if main file has been loaded, if not read data into R
+if(exists("zoodata")==FALSE){zoodata<-read.csv(file="zoopzeros250key1.csv", stringsAsFactors=F)}       #"c:/Users/gray/Dropbox/Postdoc/R data/zoopzeros250key1.csv")
+
+######## 2. The zooplankton key
+#Check if the key has been loaded yet, if not read it in 
+if(exists("key")==FALSE){key<-read.csv(file="key.csv")}                            #"c:/Users/gray/Dropbox/Postdoc/R data/key.csv")
+
+
+#######
+#Enter depth of interest in meters (can be <, >, or range, e.g. "0to10")
+#Depths available: 0to10, 10to25, 50to100, 100to150, 150to250, lessthan250 (previous 5 combined), "<251"=all depths less than 251m
+interest<-c("lessthan250")
+
+#start date of data extracted
+startdate=c("1955-01-01")
+
+#monthly, summarize by seasons=quarters (options= "seasons", "monthly", "sampledate")
+seasons<-c("seasons")
+
+#group of interest ("all", "Copepod", "Cladoceran", "Rotifer")
+taxa<-c("Copepod")
+
+#Enter species of interest ("all", or e.g. "Epischura baicalensis")
+sppec<-c("Cyclops")
+
+#Enter lifestage of interest("all", "adult", "naup", "copep") #This has not been tested for anything except for "all" or "adult" although many other options are in the key
+stage=c("all")
+
+#min number of observations per species by month (approx 720 months in dataset) species with fewer observations discarded)
+minn=1 #29 #5% for monthly
+
+######################################################
+#################start data processing################
+######################################################
+
+allzoo<-zoodata
+
+if(taxa!="all"){
+  allzoo<-allzoo[which(allzoo$Group_General==taxa),] }#take records for group of interest
+
+if(stage!="all"){
+  allzoo<-allzoo[which(allzoo$Lifestage_Cop==stage),] }#take records for group of interest
+
+#Take data only from species of interest (or take all data if an individual species wasn't specified)
+if (sppec!="all"){
+  allzoo<-allzoo[grep(sppec, paste(allzoo$Genus,allzoo$Species)),]}
+
+#create a volume column and total number of individuals column for later calculations
+allzoo$Volume<-(as.numeric(allzoo$Nig_Gr)-as.numeric(allzoo$Ver_Gr))*(pi*(0.375/2)^2)*1000 # 0.375 diameter net, multiply by 1000 to convert to litres. Note NAs will be introduced due to some records having no depth information
+allzoo<-allzoo[which(allzoo$Volume!="NA"),] #removes records with no volume
+allzoo$Tot<-allzoo$Volume*allzoo$Count #Add a column that shows total number of individuals (volume sampled multiplied by Lyubov's densities (#/m3))
+#create single depth column by merging Ver_Gr and Nig_Gr
+allzoo$Depth<-paste(allzoo$Ver_Gr,allzoo$Nig_Gr, sep="-")
+allzoo$DWA<-((as.numeric(allzoo$Nig_Gr)+as.numeric(allzoo$Ver_Gr))/2)*allzoo$Count #create a column for DWA calculations
+
+#create separate data sets for each depth category (0-10, 10-25, 50-100, 100-150, 150-250)
+if (interest=="0to10"){allzoo0to10<-allzoo[which(allzoo$Depth=="0-10"),]; allzoo0to10$Depth<-NULL}
+if (interest=="10to25"){allzoo10to25<-allzoo[which(allzoo$Depth=="10-25"),]; allzoo10to25$Depth<-NULL}
+if (interest=="50to100"){allzoo50to100<-allzoo[which(allzoo$Depth=="50-100"),]; allzoo50to100$Depth<-NULL}
+if (interest=="100to150"){allzoo100to150<-allzoo[which(allzoo$Depth=="100-150"),]; allzoo100to150$Depth<-NULL}
+if (interest=="150to250"){allzoo150to250<-allzoo[which(allzoo$Depth=="150-250"),]; allzoo150to250$Depth<-NULL}
+if (interest=="lessthan250"){allzoolessthan250<-allzoo[which(allzoo$Depth=="0-10"|allzoo$Depth=="10-25"|allzoo$Depth=="50-100"|allzoo$Depth=="100-150"|allzoo$Depth=="150-250"),]}
+if (interest=="lessthan25"){allzoolessthan25<-allzoo[which(allzoo$Depth=="0-10"|allzoo$Depth=="10-25"),]}
+if (interest=="lessthan100"){allzoolessthan100<-allzoo[which(allzoo$Depth=="0-10"|allzoo$Depth=="10-25"|allzoo$Depth=="50-100"),]}
+if (interest=="lessthan150"){allzoolessthan150<-allzoo[which(allzoo$Depth=="0-10"|allzoo$Depth=="10-25"|allzoo$Depth=="50-100"|allzoo$Depth=="100-150"),]}
+if (interest=="greaterthan100"){allzoogreaterthan100<-allzoo[which(allzoo$Depth=="100-150"|allzoo$Depth=="150-250"),]}
+
+
+#check which depth levels were requested
+allzoocommondepths<-get(paste("allzoo", interest, sep=""))
+
+
+#summarize by month
+if (seasons!="sampledate"){allzoocommondepths$Date1<-paste(substr(allzoocommondepths$Date1,1,7),"-01",sep="")} #convert all samples to 1st of month to make a regular time series
+
+#remove doublecounts
+KODsnotdouble<-key$KOD[which(key$DoubleCount=="N")] #which codes are not doubles (according to Lizzie)
+allzoocommondepths<-allzoocommondepths[which(allzoocommondepths$KOD%in% KODsnotdouble),]
+
+#create a column of genus +species
+allzoocommondepths$genspp<-paste(allzoocommondepths$Genus,allzoocommondepths$Species,sep=" ")
+
+library(doBy)
+allzoo3<-summaryBy(Tot+Volume~Date1+genspp, data=allzoocommondepths, FUN=sum, order=TRUE)
+allzoo3$Density<-allzoo3$Tot.sum/allzoo3$Volume.sum #Figure out density by adding all individuals and dividing by total volume sampled
+allzoo3<-data.frame("Date"=allzoo3$Date1, "Density"=allzoo3$Density, "species"=allzoo3$genspp) #Make a nice dataframe with Date, Density, and KOD
+clustall<-reshape(allzoo3,idvar="Date",v.names="Density",timevar="species",direction="wide") #Convert from long form to wide form (species names as column names instead of row names)
+clustall<-clustall[1:(nrow(clustall)-1),] #remove the NA row
+names(clustall)<-(gsub("Density.", "", names(clustall)))  #take only numbers from column names. Necessary because text is introduced by the reshape command
+row.names(clustall)<-unique(allzoo3$Date)[1:nrow(clustall)]; clustall[,1]<-NULL #Make rownames sample dates
+clustall<-clustall[,which(colSums(clustall,na.rm=T)>0)] #get rid of columns that are all zeroes
+
+newnb<-clustall
+newnb$Date<-as.Date(row.names(newnb))
+
+if(seasons!="sampledate"){
+  #Identify months with no data and put an NA where data should be (analagous to joining a table with all dates to identify missing samples)
+  years<-substr(newnb$Date,1,4)
+  start = as.Date(newnb$Date[which.min(newnb$Date)])
+  full <- seq(start, by="1 month", length=length(unique(years))*12)
+  allsp<-data.frame("Date"=full)
+  for (i in 1:ncol(newnb)){
+    ebaicalensis<-data.frame("Count"=with(newnb, newnb[,i][match(full, as.Date(newnb$Date))]))
+    allsp<-cbind(allsp, ebaicalensis)}
+  allsp<-allsp[,2:ncol(allsp)]; names(allsp)<-names(newnb); allsp$Date<-full
+  
+  nb<-allsp[which(allsp$Date>=startdate),]} #take data only after startdate
+
+if(seasons=="sampledate"){
+  nb<-newnb[which(newnb$Date>=startdate),]
+}
+
+zooplankton<-nb; row.names(zooplankton)<-zooplankton$Date; zooplankton$Date<-NULL; if(sppec=="all"){zooplankton<-zooplankton[,which(colSums(zooplankton,na.rm=T)>0)]}
+
+#This removes species with observations below the "minn" threshold set at the top of the code
+if(sppec=="all"){
+  belowmin<-c()
+  for (i in 1:ncol(zooplankton)){
+    belowmin[i]<-length(which(zooplankton[,i]>0))}
+  zooplankton<-zooplankton[,which(belowmin>minn)]
+}
+zooplankton<-zooplankton[,which(colSums(zooplankton,na.rm=T)>0)]
+#zooplankton<-zooplankton[which(rowSums(zooplankton,na.rm=T)>0),]
+zoorn<-row.names(zooplankton)
+
+#get rid of "unknown"
+zooplankton<-zooplankton[which(names(zooplankton)!="Unknown unknown")]
+
+#combine cyclops unknown and cyclops kolensis
+cycext<-zooplankton[,grep("Cyclops",names(zooplankton))]
+locs<-grep("Cyclops",names(zooplankton))
+if(length(locs)>1){
+sn<-names(zooplankton)[-c(locs)]
+zooplankton<-as.data.frame(zooplankton[,-c(locs)])
+names(zooplankton)<-sn
+zooplankton[,(ncol(zooplankton)+1)]<-rowSums(cycext)
+names(zooplankton)[ncol(zooplankton)]<-"Cyclops kolensis"
+row.names(zooplankton)<-zoorn
+}
+
+if (seasons=="seasons"){
+  for(i in 1:(ncol(zooplankton))){
+    library(xts)
+    qtnb<-xts(x=zooplankton[,i], order.by=as.Date(row.names(zooplankton)), frequency=12)
+    locations<-endpoints(qtnb, "quarters")-1
+    locations<-locations[which(locations>0)]
+    if(i==1){qtrnb<-data.frame("test"=rep(0,times=(length(locations)-1)))}
+    qtrnb<-as.data.frame(period.apply(qtnb, INDEX=locations, FUN=function(x) mean(x,na.rm=T)))
+    
+    names(qtrnb)<-names(zooplankton)[i]
+    if (i==1){quarterly<-data.frame(qtrnb)}
+    if (i>1){quarterly[,i]<-qtrnb}
+    
+    f<-c(1,2,3,4); h<-rep(f, times=1000)
+    startmnth<-as.numeric(substr(nb$Date[locations[2]],6,7))
+    if (startmnth==12|startmnth==1|startmnth==2){startqtr<-1}
+    if (startmnth==3|startmnth==4|startmnth==5){startqtr<-2}
+    if (startmnth==6|startmnth==7|startmnth==8){startqtr<-3}
+    if (startmnth==9|startmnth==10|startmnth==11){startqtr<-4}
+    qtrnb$quarter<-h[(min(which(h==startqtr))):(nrow(qtrnb)+min(which(h==startqtr))-1)]
+    
+    if(i==1){winter<-data.frame("test"=rep(0,times=(length(which(qtrnb$quarter==1)))))}
+    if(i==1){spring<-data.frame("test"=rep(0,times=(length(which(qtrnb$quarter==2)))))}
+    if(i==1){summer<-data.frame("test"=rep(0,times=(length(which(qtrnb$quarter==3)))))}
+    if(i==1){fall<-data.frame("test"=rep(0,times=(length(which(qtrnb$quarter==4)))))}
+    
+    winter[,i]<-qtrnb[which(qtrnb$quarter==1),1]; winter$quarter<-NULL
+    spring[,i]<-qtrnb[which(qtrnb$quarter==2),1]; spring$quarter<-NULL
+    summer[,i]<-qtrnb[which(qtrnb$quarter==3),1]; summer$quarter<-NULL
+    fall[,i]<-qtrnb[which(qtrnb$quarter==4),1]; fall$quarter<-NULL
+  }}
+
+names(winter)<-names(zooplankton)
+names(spring)<-names(zooplankton)
+names(summer)<-names(zooplankton)
+names(fall)<-names(zooplankton)
+
+
+#Identify "major" species representing >10% of individuals
+if (seasons=="seasons"){
+  b=0
+  Rabundance<-list()
+  Major<-list()
+  for (i in c("winter","spring","summer","fall")){  
+  b=b+1
+  nc<-0
+  try(nc<-ncol(get(i)))
+  if(length(nc)>0){Rabundance[[b]]<-colSums(get(i),na.rm=T)/sum(rowSums(get(i),na.rm=T))#percent of individuals over entire season
+  names(Rabundance[[b]])<-names(get(i))
+                   Major[[b]]<-Rabundance[[b]][which(Rabundance[[b]]>0.1)]}
+  
+  if(length(nc)==0)  {Rabundance[[b]]<-1; names(Rabundance[[b]])<-names(get(i))[1]}
+  } 
+  #identify names of major species
+  majspp<-list()
+  for (i in 1:length(Major)){
+    majspp[[i]]<-names(unlist(Major[[i]]))
+  library(stringr)
+  majspp2<-list()
+  }
+  for (i in 1:4){
+    majspp2[[i]]<-unique(str_split_fixed(unlist(majspp[[i]]), " ", n = 2)[, 1])}
+  }
+        
+if (seasons=="monthly"){  Rabundance<-colSums(zooplankton,na.rm=T)/sum(rowSums(zooplankton,na.rm=T))
+                           Major<-Rabundance[which(Rabundance>0.1)]}
+
+
+
+
+##############################################
+##########Actual analyses#####################
+##############################################
+
+#Draw barplots of proportion of individuals by species
+par(mfrow=(c(2,2)))
+par(oma = c(3, 0, 0, 0 ) )
+par(mar=c(6, 8, 3, 3))
+
+for (season in 1:4){
+if (season==1){nm<-"winter"};if (season==2){nm<-"spring"};if (season==3){nm<-"summer"};if (season==4){nm<-"fall"}
+mp<-barplot(Rabundance[[season]], axisnames=F,space=0,ylab="Proportion",main=paste(taxa,nm))
+abline(h=0.1)
+text(mp, par("usr")[3] - 0.001, srt = 30, adj = 1, 
+     labels = names(get(nm)), 
+     xpd = TRUE, font = 0.25) 
+}
+
+
+#have densities changed through time for all species combined?
+par(mfrow=(c(2,2)),mar=c(2,2,2,2))
+for (ssn in c("winter", "spring","summer","fall")){
+plot(rowSums(get(ssn),na.rm=T)~unique(years)[1:nrow(get(ssn))], ylab="", xlab="",  main=paste(taxa,ssn), pch=15, cex.lab=1.5, cex.axis=1.5) 
+mod<-lm(rowSums(get(ssn),na.rm=T)~as.numeric(unique(years)[1:nrow(get(ssn))]), na.action=na.exclude)
+lines(fitted(mod)~as.numeric(unique(years)[1:nrow(get(ssn))]))
+b<-summary(mod)
+p<-c()
+p<-coefficients(b)[2,4]
+legend("topleft",pch=15, legend=paste(taxa,"p=",round(p,4)))}
+
+
+######Plots for major species (>10% abundance) by season
+
+#Manual edits to major species, if needed
+#fix(majspp2)
+
+par(mfrow=(c(2,2)))
+u=0
+for (ssn in c("winter", "spring","summer","fall")){
+u=u+1
+spp<-majspp2[[u]] #c("Epischura baicalensis", "Cyclops") #Bosmina", "Daphnia") #Conochilus","Filinia","Kellicottia","Keratella")
+clrs<-c("black","red","blue", "green")
+points<-c(15,16,17,18)
+dta<-list()
+mod<-list()
+p<-c()
+library(Hmisc)
+
+for (i in 1:length(spp)){
+
+specofint<-spp[i]
+
+kt<-grep(first.word(specofint),names(get(ssn)))
+if (length(kt)>1){dta[[i]]<-rowSums(get(ssn)[,kt],na.rm=T)
+                  mod[[i]]<-lm(rowSums(get(ssn)[,kt])~as.numeric(unique(years)[1:nrow(get(ssn))]), na.action=na.omit)}
+
+if (length(kt)==1){dta[[i]]<-get(ssn)[,kt]
+mod[[i]]<-lm(get(ssn)[,kt]~as.numeric(unique(years)[1:length(get(ssn)[,kt])]), na.action=na.omit)}
+}
+
+#plot
+allyears<-unique(years); allyears<-allyears[which(allyears!="NA")]
+plot(dta[[1]]~as.numeric(unique(years)[1:length(dta[[1]])]), xlab="Year", ylab="Number per liter", main=ssn, pch=points[1], col=clrs[1], cex.lab=1.5, cex.axis=1.5, ylim=c(0,1.05*(max(unlist(dta),na.rm=T))))
+lines(fitted(mod[[1]])~allyears[1:length(fitted(mod[[1]]))],col=clrs[1]) 
+b<-summary(mod[[1]])
+p[1]<-coefficients(b)[2,4]
+
+if (length(spp)>1){
+  for (i in 2:length(spp)){
+  points(dta[[i]]~as.numeric(unique(years)[1:length(dta[[i]])]),pch=points[i],col=clrs[i])
+  lines(fitted(mod[[i]])~allyears[1:length(fitted(mod[[i]]))],col=clrs[i]) 
+  b<-summary(mod[[i]])
+  p[i]<-coefficients(b)[2,4]
+    }}
+
+legend("topleft",pch=points, col=clrs,legend=paste(spp,"p=",round(p,4)), cex=0.7)
+}
+
+
+
+
+nms<-for (i in 1:length(spp)){first.word(spp[i])}
+########Mann Kendall tests
+library(Kendall)
+MannKendall(keratella)
+
+
+acf(keratella, na.action=na.omit) #test for autocorrelation. If present, block-bootstrap may be needed for mann-kendall
+#check robustness by applying block bootstrap
+library(boot)
+MKtau<-function(z) MannKendall(z)$tau
+hg<-tsboot(keratella, MKtau, R=500, l=12, sim="fixed") #l should be longer than the most significant autocorrelation lag
+
+
+####QUALITY CONTROL PLOTS###########
+
+#Depths
+depths<-data.frame("Depth"=as.factor(allzoo$Depth),"Date"=allzoo$Date1)
+depthtab<-table(depths)
+par(mfrow=c(5,3))
+for(i in 1: nrow(depthtab)){
+barplot(depthtab[i,], main=row.names(depthtab)[i], axes=F)}
+
+
+#KODS
+spofint<-"Cyclops kolensis"
+wholesplist<-paste(key$Genus,key$Species, sep=" ")
+unspecies<-unique(wholesplist)
+group<-key$KOD[which(wholesplist %in% spofint)]
+
+KD<-data.frame("Date"=allzoo$Date1[which(as.numeric(allzoo$KOD)==group)], "KOD"=allzoo$KOD[which(as.numeric(allzoo$KOD)==group)])
+KODtable<-t(table(KD))
+
+pdf(file=paste(spofint,".pdf",sep=""), width=12, height=12) #open graphics device for pdf
+
+par(mfrow = c(ceiling(sqrt(length(group))), floor(sqrt(length(group)))))
+
+for(i in 1: nrow(KODtable)){
+  barplot(KODtable[i,], main=row.names(KODtable)[i], axes=F,space=0)}
+
+dev.off() #close graphics device to flush figure to pdf
+    
+
+

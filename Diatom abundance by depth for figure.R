@@ -1,0 +1,253 @@
+#calculate DWA for phytoplankton by group
+
+for (depth in c(0,10,50,100,200)){
+#for (phytgrp in c("diatom","cyano","green","chrysophyte","cryptophyte","dinoflagellate","PicoAlgae unID")){
+library(doBy)
+
+missing.dates<-c() #when fill NA is "no" this gives the missing dates
+percent.missing<-c() #when fill NA is "no" this gives the proportion of missing months
+
+#phyto group ("all", "diatom","cyano","green","euglenophytes","chrysophyte","cryptophyte","dinoflagellate","Bacteria", "PicoAlgae unID","Flagellate","chrysoCyst")
+phytgrp<-"diatom"
+
+#Type of quarter ("DJF" or "JFM")
+quarter.type<-"JFM"
+
+#should NA dates be filled?
+fillNAs<-"no" 
+
+#Start date
+stdate<-as.Date("1974-01-01") #most consistent for depths and after preservation change
+
+#End date
+enddate<-as.Date("1999-12-31")
+
+#Need to read in phytoplankton file
+if(exists("phyto")==FALSE){phyto<-read.csv(file="phytoplankton.csv", stringsAsFactors=F)
+                           phyto$DATE<-as.Date(phyto$DATE,"%m/%d/%Y")
+                           names(phyto)<-c("Date", "Month","Year","Depth","Code","Count","Group","Genus","Species")
+                           phyto<-orderBy(Date~.,data=phyto)
+                           phyto$Group[which(phyto$Group=="chrysophtye")]<-"chrysophyte"
+                           phyto$Group[which(phyto$Group=="Bacteria")]<-"cyano"
+                           phyto$Group[which(phyto$Group=="Flagellates")]<-"Flagellate"
+                           phyto$Group[which(phyto$PhytoGenus=="Romeria")]<-"PicoAlgae unID"
+                           phyto$Group[which(phyto$PhytoGenus=="Synechococcus")]<-"PicoAlgae unID"
+                           }
+
+#take select depths that have been sampled regularly throughout the program
+#phyto2<-phyto[which(phyto$Depth==0|phyto$Depth==10|phyto$Depth==50|phyto$Depth==100|phyto$Depth==200),] #5, 250? |phyto$Depth==150
+phyto2<-phyto[which(phyto$Depth==depth),] #250?
+
+#Take data after the specified start date
+phyto2<-phyto2[which(phyto2$Date>=stdate&phyto2$Date<=enddate),]
+
+#Some functions needed for processing----------------------
+
+#identify NAs and then fill with monthly average for whole time series
+NAfill<-function(x){
+  years<-substr(x$Date,1,4)
+  start = as.Date(x$Date[which.min(x$Date)])
+  full <- seq(start, by="1 month", length=((max(as.numeric(years))+1)-min(as.numeric(years)))*12)
+  allsp<-data.frame("Date"=full)
+  for (i in 1:ncol(x)){
+    t1<-data.frame("Count"=with(x, x[,i][match(full, as.Date(x$Date))]))
+    allsp<-cbind(allsp, t1)}
+  allsp<-allsp[,2:ncol(allsp)]; names(allsp)<-names(x); allsp$Date<-full
+  #names(allsp)<-c("Date","strat")
+  missing<-allsp$Date[which(is.na(allsp[,2])==T)] 
+  for (i in 1:length(missing)){
+    allsp[,2][which(allsp$Date==as.Date(missing[i]))]<-mean(allsp[,2][which(as.numeric(substr(allsp$Date,6,7))==as.numeric(substr(missing[i],6,7)))],na.rm=T)
+  }
+  return(allsp)
+}
+
+NAdates<-function(x){
+  years<-substr(x$Date,1,4)
+  start = as.Date(x$Date[which.min(x$Date)])
+  full <- seq(start, by="1 month", length=((max(as.numeric(years))+1)-min(as.numeric(years)))*12)
+  allsp<-data.frame("Date"=full)
+  for (i in 1:ncol(x)){
+    t1<-data.frame("Count"=with(x, x[,i][match(full, as.Date(x$Date))]))
+    allsp<-cbind(allsp, t1)}
+  allsp<-allsp[,2:ncol(allsp)]; names(allsp)<-names(x); allsp$Date<-full
+  return(allsp)
+}
+
+#---------------------------------------------------------
+
+#Check which phyto group was requested
+if (phytgrp!="all"){phyto2<-phyto2[which(phyto2$Group==phytgrp),]} #which phyto group was requested?
+if (phytgrp=="all"){phyto2<-phyto2[which(phyto2$Group=="diatom"|phyto2$Group=="green"|phyto2$Group=="chrysophtye"|phyto2$Group=="cryptophyte"|phyto2$Group=="dinoflagellate"|phyto2$Group=="PicoAlgae unID"|phyto2$Group=="cyano"),]} #which phyto group was requested? 
+
+#summarize data by density according to date and depth
+phyto2$Date<-paste(substr(phyto2$Date,1,7),"-01",sep="") #make all dates 1st of month for easy monthly averages using summaryBy
+
+#check if all depths were sampled on a particular date and exclude dates that have missing depths
+exc<-c()
+da<-c()
+cat<-list()
+undates<-unique(phyto2$Date)
+for (i in 1:length(undates)){
+  this<-phyto2[which(phyto2$Date==undates[i]),]
+  if(nrow(this)>0){
+    cat[[i]]<-(unique(this$Depth))
+    da[i]<-length(unique(this$Depth))
+    if(da[i]==length(unique(phyto2$Depth))){exc[i]<-"N"}; if(da[i]<length(unique(phyto2$Depth))){exc[i]="Y"}}
+}
+gooddates<-undates[which(exc=="N")]
+phyto2<-phyto2[which(phyto2$Date%in%gooddates),]
+
+#Do the calculations for DWA monthly
+library(doBy)
+smfun<-function(x){sum(x,na.rm=T)}
+phyto3<-summaryBy(Count~Date+Depth, data=phyto2, FUN=smfun, order=TRUE)
+phyto3$Depth[which(phyto3$Depth==0)]<-1
+phyto3$DWA<-phyto3$Depth*phyto3$Count.smfun
+phyto4<-summaryBy(DWA+Count.smfun~Date, FUN=smfun,data=phyto3)
+phyto4$DWA<-phyto4$DWA/phyto4$Count.smfun.smfun
+phyto4$Date<-as.Date(phyto4$Date)
+phyto5<-data.frame("Date"=phyto4$Date, "DWA"=phyto4$DWA,stringsAsFactors=F)
+
+#Figure out densities throught ime
+mnfun<-function(x){mean(x,na.rm=T)}
+phytdens<-summaryBy(Count~Date,data=phyto2, FUN=mnfun)
+phytdens$Date<-as.Date(phytdens$Date)
+names(phytdens)<-c("Date","Density(#/m3)")
+
+#identify missing data
+temp<-NAdates(data.frame("Date"=phyto4$Date, "Count"=phyto4$Count.smfun.smfun))
+missing.dates<-temp$Date[which(is.na(temp$Count)==T)]
+percent.missing<-length(temp$Date[which(is.na(temp$Count)==T)])/nrow(temp)
+missing.months<-substr(missing.dates,6,7)
+
+if (quarter.type=="JFM"){
+missing.winter<-length(which(missing.months=="01"|missing.months=="02"|missing.months=="03"))/length(which(substr(phyto5$Date,6,7)=="01"|substr(phyto5$Date,6,7)=="02"|substr(phyto5$Date,6,7)=="03"))
+missing.spring<-length(which(missing.months=="04"|missing.months=="05"|missing.months=="06"))/length(which(substr(phyto5$Date,6,7)=="04"|substr(phyto5$Date,6,7)=="05"|substr(phyto5$Date,6,7)=="06"))
+missing.summer<-length(which(missing.months=="07"|missing.months=="08"|missing.months=="09"))/length(which(substr(phyto5$Date,6,7)=="07"|substr(phyto5$Date,6,7)=="08"|substr(phyto5$Date,6,7)=="09"))
+missing.fall<-length(which(missing.months=="10"|missing.months=="11"|missing.months=="12"))/length(which(substr(phyto5$Date,6,7)=="10"|substr(phyto5$Date,6,7)=="11"|substr(phyto5$Date,6,7)=="12"))
+}
+if (quarter.type=="DJF"){
+  missing.winter<-length(which(missing.months=="01"|missing.months=="02"|missing.months=="12"))/length(which(substr(phyto5$Date,6,7)=="01"|substr(phyto5$Date,6,7)=="02"|substr(phyto5$Date,6,7)=="12"))
+  missing.spring<-length(which(missing.months=="04"|missing.months=="05"|missing.months=="03"))/length(which(substr(phyto5$Date,6,7)=="04"|substr(phyto5$Date,6,7)=="05"|substr(phyto5$Date,6,7)=="03"))
+  missing.summer<-length(which(missing.months=="07"|missing.months=="08"|missing.months=="06"))/length(which(substr(phyto5$Date,6,7)=="07"|substr(phyto5$Date,6,7)=="08"|substr(phyto5$Date,6,7)=="06"))
+  missing.fall<-length(which(missing.months=="10"|missing.months=="11"|missing.months=="09"))/length(which(substr(phyto5$Date,6,7)=="10"|substr(phyto5$Date,6,7)=="11"|substr(phyto5$Date,6,7)=="09"))
+}
+
+#Fill NAs?
+if (fillNAs=="yes"){
+  phyto5<-NAfill(phyto5)
+  
+  #NAs with zero abundances should be NA, while sample dates missed should be filled with averages
+  phyto5$DWA[which(temp$Count==0)]<-NA
+  phytdens<-NAfill(phytdens)}
+
+if (fillNAs=="no"){
+phyto5<-NAdates(phyto5)
+phytdens<-NAdates(phytdens)
+}
+
+
+#Change to quarterly time series
+
+if (quarter.type=="DJF"){
+  library(xts)
+  months<-as.numeric(substr(phyto5$Date,6,7))+1
+  months[which(months==13)]<-1
+  years<-as.numeric(substr(phyto5$Date,1,4))
+  years[which(months==1)]<-years[which(months==1)]+1
+  months[which(nchar(months)==1)]<-paste("0",months[which(nchar(months)==1)],sep="")
+  days<-rep("01",length(years))
+  phyto5$Date<-as.Date(paste(years,months,days,sep="-"))
+  dates<-as.Date(phyto5$Date)
+  phytdens$Date<-phyto5$Date
+}
+
+#first for DWA 
+library(xts)
+qtnb<-xts(x=phyto5$DWA, order.by=as.Date(phyto5$Date))
+locations<-endpoints(qtnb, "quarters")
+qtrnb<-as.data.frame(period.apply(qtnb, INDEX=locations, FUN=function(x) mean(x,na.rm=T)))
+
+quarterly<-data.frame(qtrnb)
+quarters<-(as.numeric(substr(row.names(qtrnb),6,7)))
+quarters[which(quarters==1|quarters==2|quarters==3)]<-1
+quarters[which(quarters==4|quarters==5|quarters==6)]<-2
+quarters[which(quarters==7|quarters==8|quarters==9)]<-3
+quarters[which(quarters==10|quarters==11|quarters==12)]<-4
+qtrnb$quarter<-quarters
+
+winter<-qtrnb[which(qtrnb$quarter==1),1]
+spring<-qtrnb[which(qtrnb$quarter==2),1]
+summer<-qtrnb[which(qtrnb$quarter==3),1]
+fall<-qtrnb[which(qtrnb$quarter==4),1]
+
+years<-as.numeric(unique(substr(phyto5$Date,1,4)))
+
+#second for abundance (needed for bubble sizes)
+qtnb2<-xts(x=phytdens[,2], order.by=as.Date(phytdens$Date))
+locations2<-endpoints(qtnb2, "quarters")
+qtrnb2<-as.data.frame(period.apply(qtnb2, INDEX=locations, FUN=function(x) mean(x,na.rm=T)))
+
+quarterly2<-data.frame(qtrnb2)
+quarters2<-(as.numeric(substr(row.names(qtrnb2),6,7)))
+quarters2[which(quarters2==1|quarters2==2|quarters2==3)]<-1
+quarters2[which(quarters2==4|quarters2==5|quarters2==6)]<-2
+quarters2[which(quarters2==7|quarters2==8|quarters2==9)]<-3
+quarters2[which(quarters2==10|quarters2==11|quarters2==12)]<-4
+qtrnb2$quarter<-quarters2
+
+Density<-qtrnb2[which(qtrnb2$quarter==3),1]
+if(depth==0){zoo0to10<-data.frame("Abundance"=Density, "Year"=years, "Depth"=rep("0",length(years)))}
+if(depth==10){zoo10to25<-data.frame("Abundance"=Density, "Year"=years, "Depth"=rep("10",length(years)))}
+if(depth==50){zoo50to100<-data.frame("Abundance"=Density, "Year"=years, "Depth"=rep("50",length(years)))}
+if(depth==100){zoo100to150<-data.frame("Abundance"=Density, "Year"=years, "Depth"=rep("100",length(years)))}
+if(depth==200){zoo150to250<-data.frame("Abundance"=Density, "Year"=years, "Depth"=rep("200",length(years)))}
+
+}
+par(mar=c(1.5,2,0.5,0.5))
+par(mfrow=c(5,1))
+plot(zoo0to10[,1]~zoo0to10[,2], pch=16,main="Depth 0m")
+mod<-lm(zoo0to10[,1]~zoo0to10[,2],na.action=na.exclude)
+res1<-round(summary(mod)$coefficients[2,4],4)
+slp<-round(summary(mod)$coefficients[2,1],3)
+lines(fitted(mod)~zoo0to10$Year)
+legend("topleft",legend=paste("slope=", slp,"p-value=",res1, sep=" "),bty="n")
+
+plot(zoo10to25[,1]~zoo10to25[,2], pch=16,main="Depth 10m")
+mod<-lm(zoo10to25[,1]~zoo10to25[,2],na.action=na.exclude)
+res2<-round(summary(mod)$coefficients[2,4],4)
+slp<-round(summary(mod)$coefficients[2,1],3)
+lines(fitted(mod)~zoo10to25$Year)
+legend("topleft",legend=paste("slope=", slp,"p-value=",res2, sep=" "),bty="n")
+
+plot(zoo50to100[,1]~zoo50to100[,2], pch=16,main="Depth 50m")
+mod<-lm(zoo50to100[,1]~zoo50to100[,2],na.action=na.exclude)
+res3<-round(summary(mod)$coefficients[2,4],4)
+slp<-round(summary(mod)$coefficients[2,1],3)
+lines(fitted(mod)~zoo50to100$Year)
+legend("topleft",legend=paste("slope=", slp,"p-value=",res3, sep=" "),bty="n")
+
+plot(zoo100to150[,1]~zoo100to150[,2], pch=16,main="Depth 100m",ylab="")
+mod<-lm(zoo100to150[,1]~zoo100to150[,2],na.action=na.exclude)
+res4<-round(summary(mod)$coefficients[2,4],4)
+slp<-round(summary(mod)$coefficients[2,1],3)
+lines(fitted(mod)~zoo100to150$Year)
+legend("topleft",legend=paste("slope=", slp,"p-value=",res4, sep=" "),bty="n")
+
+plot(zoo150to250[,1]~zoo150to250[,2], pch=16,main="Depth 200m")
+mod<-lm(zoo150to250[,1]~zoo150to250[,2],na.action=na.exclude)
+res5<-round(summary(mod)$coefficients[2,4],4)
+slp<-round(summary(mod)$coefficients[2,1],3)
+lines(fitted(mod)~zoo150to250$Year)
+legend("topleft",legend=paste("slope=", slp,"p-value=",res5, sep=" "),bty="n")
+
+datas<-rbind(zoo0to10,zoo10to25,zoo50to100,zoo100to150,zoo150to250)
+model1<-lm(Abundance~Year*Depth, na.action=na.exclude,data=datas)
+summary(model1)
+
+results<-glht(model1, linfct = c("Year = 0",
+                                 "Year:Depth10 = 0",
+                                 "Year:Depth50 = 0",
+                                 "Year:Depth100 = 0",
+                                 "Year:Depth200 = 0"))
+summary(results)
