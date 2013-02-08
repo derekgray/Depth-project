@@ -22,7 +22,7 @@ Abundance.monthly<-list()
 missingdata<-list() #percent of months with zero density or missing values e.g. 72 months of 720 = 10%
 
 #group of interest ("all", "Copepod", "Cladoceran", "Rotifer")
-taxa<-"Cladoceran" #check stage... needs to be "all" if this is not copepod
+taxa<-"Copepod" #check stage... needs to be "all" if this is not copepod
 
 if (taxa=="all"){spplist<-c("all")} #stage must be "all" for "all" taxa
 if (taxa=="Copepod"){splist<-c("all","Epischura","Cyclops")}
@@ -48,7 +48,7 @@ replaceNA<-"no"
 quarter.type<-"JFM"
 
 #Enter lifestage of interest("all", "adult", "naup", "copep") #This has not been tested for anything except for "all" or "adult" although many other options are in the key
-stage<-"adult"
+stage<-"naup"
 
 #remove doublecounts? ("yes","no")
 dbl<-"yes"
@@ -79,9 +79,9 @@ if (sppec!="all"){
 allzoo<-allzoo[which(allzoo$Date1>=as.Date(startdate)),]
 
 #create a volume column and total number of individuals column for later calculations
-allzoo$Volume<-(as.numeric(allzoo$Nig_Gr)-as.numeric(allzoo$Ver_Gr))*(pi*(0.375/2)^2)*1000 # 0.375 diameter net, multiply by 1000 to convert to litres. Note NAs will be introduced due to some records having no depth information
+allzoo$Volume<-(as.numeric(allzoo$Nig_Gr)-as.numeric(allzoo$Ver_Gr))*(pi*(0.375/2)^2)*1000 # 0.375m diameter net, multiply by 1000 to convert to litres. Note NAs will be introduced due to some records having no depth information
+allzoo$Count<-(allzoo$Count*1000)/(1/(pi*(0.375/2)^2)) #This scales the counts to number for the whole net tow. Original units were 1000 individuals per square meter
 allzoo<-allzoo[which(allzoo$Volume!="NA"),] #removes records with no volume
-allzoo$Tot<-allzoo$Volume*allzoo$Count #Add a column that shows total number of individuals (volume sampled multiplied by Lyubov's densities (#/m3))
 
 #create single depth column by merging Ver_Gr and Nig_Gr
 allzoo$Depth<-paste(allzoo$Ver_Gr,allzoo$Nig_Gr, sep="-")
@@ -148,10 +148,9 @@ names(DWAmonthly)<-c("Date","DWA")
   
 #for abundance
 Density<-summaryBy(Count+Volume~Date1+Depth,data=allzoocommondepths,FUN=c(sum,mean),order=TRUE) 
-Density$Tot<-Density$Count.sum*Density$Volume.mean
 Density$Date1<-paste(substr(Density$Date1,1,7),"-01",sep="")
-Density.monthly<-summaryBy(Tot+Volume.mean~Date1, data=Density, FUN=sum, order=TRUE)
-Density.monthly$density<-Density.monthly$Tot.sum/Density.monthly$Volume.mean.sum
+Density.monthly<-summaryBy(Count.sum+Volume.mean~Date1, data=Density, FUN=sum, order=TRUE)
+Density.monthly$density<-Density.monthly$Count.sum.sum/Density.monthly$Volume.mean.sum
 Density.monthly<-data.frame("Date"=Density.monthly$Date1,"Density"=Density.monthly$density)
 Density.monthly$Date<-as.Date(Density.monthly$Date)
 if (replaceNA=="no"){Density.monthly<-NAdates(Density.monthly)}
@@ -249,12 +248,13 @@ if (DW<0.05){mod<-gls(dta[,1]~dta[,2], correlation=corAR1(form=~1),na.action=na.
 if(DW>0.05){b<-summary(mod);  p<-coefficients(b)[2,4]}
 if(DW<0.05){b<-summary(mod)$tTable; p<-b[2,4]}
 
-results<-data.frame("Year"=as.numeric(years), "Fitted"=fitted(mod))
+results<-data.frame("Year"=as.numeric(dta[,2]), "Fitted"=fitted(mod))
 
 groupkey<-data.frame(inkey=c("all", "Copepod","Cladoceran","Rotifer"), real=c("All Zooplankton", "Copepod","Cladoceran","Rotifer"))
 currentgroup<-groupkey$real[which(groupkey$inkey==taxa)]
-datas<-na.omit(data.frame("Date"=years,"DWA"=majspp.summer$all,"Density"=majspp.density$all))
+datas<-na.omit(data.frame("Date"=dta[,2],"DWA"=majspp.summer$all,"Density"=majspp.density$all))
 
+library(ggplot2)
 ggplot(datas, aes(x=Date, y=DWA, size=Density),legend=FALSE)+
   theme_bw()+
   geom_point(colour="black", shape=16)+ 
